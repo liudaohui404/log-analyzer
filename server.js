@@ -18,6 +18,16 @@ const upload = multer({
   storage,
   limits: {
     fileSize: 100 * 1024 * 1024 // 100MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Check if file is a ZIP file
+    if (file.mimetype === 'application/zip' || 
+        file.mimetype === 'application/x-zip-compressed' ||
+        file.originalname.toLowerCase().endsWith('.zip')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only ZIP files are allowed'), false);
+    }
   }
 });
 
@@ -25,13 +35,24 @@ const upload = multer({
 app.use(express.static(path.join(__dirname, 'client/build')));
 
 // API Routes
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+app.post('/api/upload', (req, res) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'File too large. Maximum size is 100MB.' });
+      }
+      if (err.message === 'Only ZIP files are allowed') {
+        return res.status(400).json({ error: 'Only ZIP files are allowed.' });
+      }
+      return res.status(400).json({ error: err.message });
     }
 
-    const { password } = req.body;
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const { password } = req.body;
     
     // Create ZIP instance
     const zip = new AdmZip(req.file.buffer);
@@ -95,13 +116,14 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
       throw err;
     }
     
-  } catch (error) {
-    console.error('Error processing file:', error);
-    res.status(500).json({ 
-      error: 'Failed to process ZIP file',
-      details: error.message 
-    });
-  }
+    } catch (error) {
+      console.error('Error processing file:', error);
+      res.status(500).json({ 
+        error: 'Failed to process ZIP file',
+        details: error.message 
+      });
+    }
+  });
 });
 
 // Build directory tree structure

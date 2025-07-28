@@ -12,7 +12,13 @@ function FileContent({ file, searchTerm }) {
   const highlightedContent = useMemo(() => {
     if (!searchTerm) return file.content;
 
-    const lines = file.content.split('\n');
+    // Limit highlighting for performance on large files
+    const MAX_CONTENT_LENGTH = 50000; // 50KB
+    const contentToProcess = file.content.length > MAX_CONTENT_LENGTH 
+      ? file.content.substring(0, MAX_CONTENT_LENGTH) + '\n... (content truncated for performance)'
+      : file.content;
+
+    const lines = contentToProcess.split('\n');
     return lines.map(line => {
       if (!line.toLowerCase().includes(searchTerm.toLowerCase())) {
         return line;
