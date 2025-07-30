@@ -64,8 +64,9 @@ app.post('/api/upload', (req, res) => {
       const extractedFiles = {};
       let totalSize = 0;
       let totalLines = 0;
+      let passwordError = false;
       
-      entries.forEach(entry => {
+      for (const entry of entries) {
         if (!entry.isDirectory) {
           try {
             let content;
@@ -87,13 +88,33 @@ app.post('/api/upload', (req, res) => {
             };
           } catch (err) {
             // If password is wrong or file is corrupted
-            if (err.message.includes('Invalid password') || err.message.includes('Bad password')) {
-              return res.status(401).json({ error: 'Invalid password for ZIP file' });
+            if (err.message.includes('Wrong Password') || 
+                err.message.includes('Bad password') || 
+                err.message.includes('Invalid password') ||
+                err.message.includes('Incompatible password parameter')) {
+              passwordError = true;
+              break;
             }
             console.warn(`Could not extract ${entry.entryName}:`, err.message);
           }
         }
-      });
+      }
+      
+      // Check for password errors
+      if (passwordError) {
+        return res.status(401).json({ error: 'Invalid password for ZIP file' });
+      }
+
+      // Check if no files were extracted but entries exist (indicates password issue)
+      if (Object.keys(extractedFiles).length === 0 && entries.length > 0) {
+        // Check if any entry appears to be encrypted/password protected
+        const hasEncryptedEntries = entries.some(entry => !entry.isDirectory);
+        if (hasEncryptedEntries) {
+          return res.status(401).json({ 
+            error: 'ZIP file appears to be password protected. Please provide the correct password.' 
+          });
+        }
+      }
 
       // Build directory tree structure
       const directoryTree = buildDirectoryTree(Object.keys(extractedFiles));
@@ -110,7 +131,10 @@ app.post('/api/upload', (req, res) => {
       });
       
     } catch (err) {
-      if (err.message.includes('Invalid password') || err.message.includes('Bad password')) {
+      if (err.message.includes('Wrong Password') || 
+          err.message.includes('Bad password') || 
+          err.message.includes('Invalid password') ||
+          err.message.includes('Incompatible password parameter')) {
         return res.status(401).json({ error: 'Invalid password for ZIP file' });
       }
       throw err;
