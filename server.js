@@ -53,68 +53,119 @@ app.post('/api/upload', (req, res) => {
       }
 
       const { password } = req.body;
+      const originalFilename = req.file.originalname;
     
-    // Create ZIP instance
-    const zip = new AdmZip(req.file.buffer);
-    
-    // Try to extract with password if provided
-    try {
-      const entries = zip.getEntries();
+      // Create ZIP instance
+      const zip = new AdmZip(req.file.buffer);
       
-      const extractedFiles = {};
-      let totalSize = 0;
-      let totalLines = 0;
-      
-      entries.forEach(entry => {
-        if (!entry.isDirectory) {
-          try {
-            let content;
-            if (password) {
-              content = entry.getData(password).toString('utf8');
-            } else {
-              content = entry.getData().toString('utf8');
+      // Function to try extracting files with a given password
+      const tryExtract = (pwd) => {
+        const entries = zip.getEntries();
+        const extractedFiles = {};
+        let totalSize = 0;
+        let totalLines = 0;
+        let hasEncryptedFiles = false;
+        let extractionSuccess = false;
+        
+        for (const entry of entries) {
+          if (!entry.isDirectory) {
+            try {
+              let content;
+              if (pwd) {
+                content = entry.getData(pwd).toString('utf8');
+              } else {
+                content = entry.getData().toString('utf8');
+              }
+              
+              const lines = content.split('\n').length;
+              totalLines += lines;
+              totalSize += entry.header.size;
+              
+              extractedFiles[entry.entryName] = {
+                content,
+                size: entry.header.size,
+                lines: lines,
+                path: entry.entryName
+              };
+              extractionSuccess = true;
+            } catch (err) {
+              // Check if file is encrypted
+              if (err.message.includes('Invalid password') || 
+                  err.message.includes('Bad password') || 
+                  err.message.includes('encrypted')) {
+                hasEncryptedFiles = true;
+                throw err; // Re-throw to try next password
+              }
+              console.warn(`Could not extract ${entry.entryName}:`, err.message);
             }
-            
-            const lines = content.split('\n').length;
-            totalLines += lines;
-            totalSize += entry.header.size;
-            
-            extractedFiles[entry.entryName] = {
-              content,
-              size: entry.header.size,
-              lines: lines,
-              path: entry.entryName
-            };
-          } catch (err) {
-            // If password is wrong or file is corrupted
-            if (err.message.includes('Invalid password') || err.message.includes('Bad password')) {
-              return res.status(401).json({ error: 'Invalid password for ZIP file' });
-            }
-            console.warn(`Could not extract ${entry.entryName}:`, err.message);
           }
         }
-      });
+        
+        return { extractedFiles, totalSize, totalLines, hasEncryptedFiles, extractionSuccess };
+      };
+      
+      // Try extraction with different password strategies
+      let result;
+      let passwordUsed = null;
+      
+      // Strategy 1: Try without password first
+      try {
+        result = tryExtract(null);
+        if (result.extractionSuccess && !result.hasEncryptedFiles) {
+          passwordUsed = 'none';
+        }
+      } catch (err) {
+        // Files are encrypted, continue to next strategy
+      }
+      
+      // Strategy 2: If user provided a password, try it
+      if (!passwordUsed && password) {
+        try {
+          result = tryExtract(password);
+          if (result.extractionSuccess) {
+            passwordUsed = 'user-provided';
+          }
+        } catch (err) {
+          // User password failed, continue to next strategy
+        }
+      }
+      
+      // Strategy 3: Try using the original filename as password
+      if (!passwordUsed && originalFilename) {
+        try {
+          result = tryExtract(originalFilename);
+          if (result.extractionSuccess) {
+            passwordUsed = 'filename';
+          }
+        } catch (err) {
+          // Filename as password failed
+          return res.status(401).json({ 
+            error: 'Invalid password for ZIP file. Please provide the correct password.' 
+          });
+        }
+      }
+      
+      // If we still haven't extracted anything, return error
+      if (!passwordUsed || !result || Object.keys(result.extractedFiles).length === 0) {
+        return res.status(401).json({ 
+          error: 'Unable to extract files. The ZIP file may be password-protected.' 
+        });
+      }
 
       // Build directory tree structure
-      const directoryTree = buildDirectoryTree(Object.keys(extractedFiles));
+      const directoryTree = buildDirectoryTree(Object.keys(result.extractedFiles));
       
       res.json({
         success: true,
-        files: extractedFiles,
+        files: result.extractedFiles,
         directoryTree,
         stats: {
-          totalFiles: Object.keys(extractedFiles).length,
-          totalSize,
-          totalLines
-        }
+          totalFiles: Object.keys(result.extractedFiles).length,
+          totalSize: result.totalSize,
+          totalLines: result.totalLines
+        },
+        passwordMethod: passwordUsed // For debugging/info purposes
       });
-      
-    } catch (err) {
-      if (err.message.includes('Invalid password') || err.message.includes('Bad password')) {
-        return res.status(401).json({ error: 'Invalid password for ZIP file' });
-      }
-      throw err;
-    }
     
     } catch (error) {
       console.error('Error processing file:', error);

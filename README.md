@@ -5,9 +5,11 @@ A modern web application for uploading, analyzing, and visualizing logs from pas
 ## Features
 
 - 📁 **ZIP File Upload**: Support for password-protected and unprotected ZIP files
+- 🔐 **Smart Password Handling**: Automatically tries the filename as password for encrypted archives
 - 🎨 **Modern UI**: Beautiful, responsive interface built with Tailwind CSS
 - 🔍 **File Analysis**: Automatic extraction and parsing of log files
 - 📊 **Interactive Viewer**: Advanced file content display with search functionality
+- 📂 **Directory Structure**: Preserves and displays the original directory hierarchy
 - 🌓 **Theme Support**: Dark/Light mode toggle
 - 📱 **Responsive Design**: Mobile-friendly layout
 
@@ -73,11 +75,22 @@ The application will be available at `http://localhost:9000`
 ## Usage
 
 1. Upload a ZIP file using the drag-and-drop interface or file browser
-2. Enter a password if the ZIP file is protected
-3. Browse the extracted file structure in the directory tree
+2. (Optional) Enter a password if the ZIP file is protected
+   - **Note**: The system automatically tries the filename as the password if the file is encrypted
+   - Password hierarchy: No password → User-provided password → Filename as password
+3. Browse the extracted file structure in the directory tree (preserves original directory hierarchy)
 4. Select files to view their contents
 5. Use the search functionality to find specific content
 6. Toggle between dark and light themes as needed
+
+### Password Protection
+
+The log analyzer implements intelligent password handling:
+
+- **Automatic Detection**: The system first attempts to extract files without a password
+- **User Password**: If provided, it will be tried next
+- **Filename Fallback**: If the file is encrypted and no valid password is provided, the system automatically tries using the original filename (including extension) as the password
+  - Example: For a file named `log-20250630120628.zip`, the password `log-20250630120628.zip` will be tried automatically
 
 ## API Endpoints
 
