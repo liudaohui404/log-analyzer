@@ -1,23 +1,18 @@
-import React, { useMemo, useRef, useEffect, useState } from 'react';
+import React, { useMemo, useRef, useEffect, useState, useCallback } from 'react';
 import { List } from 'react-window';
 
 function FileContent({ file, searchTerm, analysis }) {
-  const [windowHeight, setWindowHeight] = useState(600);
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm);
   const containerRef = useRef(null);
 
+  // Debounce search term to improve performance
   useEffect(() => {
-    const updateHeight = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const availableHeight = window.innerHeight - rect.top - 40;
-        setWindowHeight(Math.max(400, availableHeight));
-      }
-    };
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 300);
 
-    updateHeight();
-    window.addEventListener('resize', updateHeight);
-    return () => window.removeEventListener('resize', updateHeight);
-  }, []);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes';
@@ -61,38 +56,48 @@ function FileContent({ file, searchTerm, analysis }) {
     return map;
   }, [patternMatches]);
 
-  const lines = useMemo(() => {
+  // Pre-parse and process log lines once
+  const parsedLines = useMemo(() => {
     if (!file || !file.content) return [];
-    return file.content.split('\n');
+    return file.content.split('\n').map((line, index) => ({
+      lineNumber: index + 1,
+      rawContent: line,
+      lowerCaseContent: line.toLowerCase() // Pre-compute for faster search
+    }));
   }, [file]);
 
+  // Optimize highlighted lines computation with debounced search
   const highlightedLines = useMemo(() => {
-    return lines.map((line, index) => {
-      const lineNumber = index + 1;
-      let highlightedLine = line;
+    // Escape special regex characters in search term
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    
+    return parsedLines.map((lineData) => {
+      let highlightedLine = lineData.rawContent;
       
-      // Highlight search term
-      if (searchTerm && line.toLowerCase().includes(searchTerm.toLowerCase())) {
-        const regex = new RegExp(`(${searchTerm})`, 'gi');
-        highlightedLine = line.replace(regex, '<mark class="bg-yellow-200 dark:bg-yellow-800 px-1">$1</mark>');
+      // Highlight search term only if debounced search exists
+      if (debouncedSearchTerm && lineData.lowerCaseContent.includes(debouncedSearchTerm.toLowerCase())) {
+        const escapedTerm = escapeRegex(debouncedSearchTerm);
+        const regex = new RegExp(`(${escapedTerm})`, 'gi');
+        highlightedLine = lineData.rawContent.replace(regex, '<mark class="bg-yellow-200 dark:bg-yellow-800 px-1">$1</mark>');
       }
       
       // Check if this line matches any pattern
-      const matchedPatterns = lineToPatternMap.get(lineNumber);
+      const matchedPatterns = lineToPatternMap.get(lineData.lineNumber);
       
       return {
-        lineNumber,
+        lineNumber: lineData.lineNumber,
         content: highlightedLine,
         matchedPatterns: matchedPatterns || null
       };
     });
-  }, [lines, searchTerm, lineToPatternMap]);
+  }, [parsedLines, debouncedSearchTerm, lineToPatternMap]);
 
   const searchMatches = useMemo(() => {
-    if (!searchTerm || !file || !file.content) return 0;
-    const regex = new RegExp(searchTerm, 'gi');
+    if (!debouncedSearchTerm || !file || !file.content) return 0;
+    const escapedTerm = debouncedSearchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escapedTerm, 'gi');
     return (file.content.match(regex) || []).length;
-  }, [file, searchTerm]);
+  }, [file, debouncedSearchTerm]);
 
   const getSeverityColor = (severity) => {
     const colors = {
@@ -104,8 +109,8 @@ function FileContent({ file, searchTerm, analysis }) {
     return colors[severity] || '';
   };
 
-  // Virtual list row renderer
-  const Row = ({ index, style }) => {
+  // Virtual list row renderer - wrapped in useCallback for performance
+  const Row = useCallback(({ index, style }) => {
     const lineData = highlightedLines[index];
     const hasPatternMatch = lineData.matchedPatterns !== null;
     const highestSeverity = hasPatternMatch 
@@ -139,7 +144,7 @@ function FileContent({ file, searchTerm, analysis }) {
         </div>
       </div>
     );
-  };
+  }, [highlightedLines]);
 
   return (
     <div className="flex flex-col h-full">
@@ -161,7 +166,12 @@ function FileContent({ file, searchTerm, analysis }) {
         </div>
         
         <div className="mt-2 flex items-center space-x-2">
-          {searchTerm && searchMatches > 0 && (
+          {searchTerm && searchTerm !== debouncedSearchTerm && (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+              Searching...
+            </span>
+          )}
+          {debouncedSearchTerm && searchMatches > 0 && (
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
               {searchMatches} search matches
             </span>
@@ -174,10 +184,10 @@ function FileContent({ file, searchTerm, analysis }) {
         </div>
       </div>
 
-      {/* File Content with Virtual Scrolling */}
-      <div className="flex-1 overflow-hidden" ref={containerRef}>
+      {/* File Content with Virtual Scrolling - Fixed Height */}
+      <div className="flex-1 overflow-hidden" ref={containerRef} style={{ height: '600px' }}>
         <List
-          height={windowHeight}
+          height={600}
           itemCount={highlightedLines.length}
           itemSize={24}
           width="100%"
