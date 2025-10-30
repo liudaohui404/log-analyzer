@@ -12,15 +12,17 @@
     "install-client": "cd client && npm install"
   },
   "dependencies": {
+    "adm-zip": "^0.5.10",
+    "better-sqlite3": "^12.4.1",
+    "cors": "^2.8.5",
     "express": "^4.18.2",
     "multer": "^1.4.5-lts.1",
-    "adm-zip": "^0.5.10",
-    "cors": "^2.8.5",
-    "path": "^0.12.7"
+    "path": "^0.12.7",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
-    "concurrently": "^8.2.0"
+    "concurrently": "^8.2.0",
+    "nodemon": "^3.0.1"
   },
   "keywords": [
     "log-analyzer",
