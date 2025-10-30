@@ -14,6 +14,7 @@ function DirectoryTree({ tree, files, selectedFile, onFileSelect }) {
   };
 
   const renderTree = (node, path = '', level = 0) => {
+    if (!node || typeof node !== 'object') return null;
     return Object.entries(node).map(([name, item]) => {
       const currentPath = path ? `${path}/${name}` : name;
       const isDirectory = item.type === 'directory';
