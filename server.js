@@ -69,6 +69,12 @@ app.post('/api/upload', (req, res) => {
         
         for (const entry of entries) {
           if (!entry.isDirectory) {
+            // Check if file is encrypted using library property
+            if (entry.header.encrypted && !pwd) {
+              hasEncryptedFiles = true;
+              continue; // Skip encrypted files when no password provided
+            }
+            
             try {
               let content;
               if (pwd) {
@@ -89,10 +95,10 @@ app.post('/api/upload', (req, res) => {
               };
               extractionSuccess = true;
             } catch (err) {
-              // Check if file is encrypted
-              if (err.message.includes('Invalid password') || 
-                  err.message.includes('Bad password') || 
-                  err.message.includes('encrypted')) {
+              // Check if it's a password-related error
+              if (entry.header.encrypted || 
+                  err.message.includes('Invalid password') || 
+                  err.message.includes('Bad password')) {
                 hasEncryptedFiles = true;
                 throw err; // Re-throw to try next password
               }
