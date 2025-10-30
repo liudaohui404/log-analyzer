@@ -151,7 +151,7 @@ function FileViewer({ data }) {
                   📁 File Structure
                 </h3>
                 <DirectoryTree
-                  tree={data.directoryTree}
+                  tree={data.directoryTree || {}}
                   files={filteredFiles}
                   selectedFile={selectedFile?.path}
                   onFileSelect={handleFileSelect}

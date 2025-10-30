@@ -3,20 +3,32 @@ import { List } from 'react-window';
 
 function FileContent({ file, searchTerm, analysis }) {
   const [windowHeight, setWindowHeight] = useState(600);
+  const [windowWidth, setWindowWidth] = useState(800);
   const containerRef = useRef(null);
 
   useEffect(() => {
-    const updateHeight = () => {
+    const updateDimensions = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         const availableHeight = window.innerHeight - rect.top - 40;
+        const availableWidth = rect.width || 800; // Fallback to 800 if width is 0
         setWindowHeight(Math.max(400, availableHeight));
+        setWindowWidth(Math.max(400, availableWidth)); // Ensure minimum width
       }
     };
 
-    updateHeight();
-    window.addEventListener('resize', updateHeight);
-    return () => window.removeEventListener('resize', updateHeight);
+    // Use requestAnimationFrame to ensure DOM is ready
+    const rafId = requestAnimationFrame(updateDimensions);
+    // Also run after a short delay to handle tab switching
+    const timeoutId = setTimeout(updateDimensions, 100);
+    
+    window.addEventListener('resize', updateDimensions);
+    
+    return () => {
+      cancelAnimationFrame(rafId);
+      clearTimeout(timeoutId);
+      window.removeEventListener('resize', updateDimensions);
+    };
   }, []);
 
   const formatFileSize = (bytes) => {
@@ -176,19 +188,21 @@ function FileContent({ file, searchTerm, analysis }) {
 
       {/* File Content with Virtual Scrolling */}
       <div className="flex-1 overflow-hidden" ref={containerRef}>
-        <List
-          height={windowHeight}
-          itemCount={highlightedLines.length}
-          itemSize={24}
-          width="100%"
-          className="scrollbar-thin"
-        >
-          {Row}
-        </List>
+        {windowWidth > 0 && windowHeight > 0 && (
+          <List
+            height={windowHeight}
+            itemCount={highlightedLines.length}
+            itemSize={24}
+            width={windowWidth}
+            className="scrollbar-thin"
+          >
+            {Row}
+          </List>
+        )}
       </div>
 
       {/* Custom scrollbar styling */}
-      <style jsx>{`
+      <style>{`
         .scrollbar-thin::-webkit-scrollbar {
           width: 8px;
           height: 8px;

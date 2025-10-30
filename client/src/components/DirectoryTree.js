@@ -15,7 +15,11 @@ function DirectoryTree({ tree, files, selectedFile, onFileSelect }) {
 
   const renderTree = (node, path = '', level = 0) => {
     if (!node || typeof node !== 'object') return null;
+    const nodeKeys = Object.keys(node);
+    if (nodeKeys.length === 0) return null;
+    
     return Object.entries(node).map(([name, item]) => {
+      if (!item) return null; // Skip null/undefined items
       const currentPath = path ? `${path}/${name}` : name;
       const isDirectory = item.type === 'directory';
       const isExpanded = expandedDirs.has(currentPath);
@@ -26,9 +30,7 @@ function DirectoryTree({ tree, files, selectedFile, onFileSelect }) {
         return (
           <div key={currentPath}>
             <div
-              className={`flex items-center py-1 px-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md ${
-                level > 0 ? `ml-${level * 4}` : ''
-              }`}
+              className={`flex items-center py-1 px-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md`}
               onClick={() => toggleDirectory(currentPath)}
               style={{ marginLeft: `${level * 16}px` }}
             >
@@ -39,7 +41,7 @@ function DirectoryTree({ tree, files, selectedFile, onFileSelect }) {
                 {name}
               </span>
             </div>
-            {isExpanded && (
+            {isExpanded && item.children && (
               <div>
                 {renderTree(item.children, currentPath, level + 1)}
               </div>
@@ -95,7 +97,7 @@ function DirectoryTree({ tree, files, selectedFile, onFileSelect }) {
 
   return (
     <div className="max-h-96 overflow-y-auto">
-      {Object.keys(tree).length === 0 ? (
+      {!tree || Object.keys(tree).length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400 italic">
           No files found
         </p>
