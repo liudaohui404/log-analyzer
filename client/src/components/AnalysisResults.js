@@ -262,9 +262,15 @@ function AnalysisResults({ analysis, analysisId }) {
                                 Solution Steps:
                               </span>
                               <ol className="list-decimal list-inside text-sm text-blue-800 dark:text-blue-300 mt-1 space-y-1">
-                                {JSON.parse(solution.solution_steps).map((step, idx) => (
-                                  <li key={idx}>{step}</li>
-                                ))}
+                                {(() => {
+                                  try {
+                                    return JSON.parse(solution.solution_steps).map((step, idx) => (
+                                      <li key={idx}>{step}</li>
+                                    ));
+                                  } catch (e) {
+                                    return <li>{solution.solution_steps}</li>;
+                                  }
+                                })()}
                               </ol>
                             </div>
                           )}
