@@ -1,5 +1,10 @@
-import React, { useMemo, useRef, useEffect, useState, useCallback } from 'react';
+import React, { useMemo, useRef, useEffect, useState, forwardRef } from 'react';
 import { List } from 'react-window';
+
+// Custom outer element for List to apply scrollbar styles
+const OuterElementWithScrollbar = forwardRef((props, ref) => (
+  <div ref={ref} {...props} className="scrollbar-thin" />
+));
 
 function FileContent({ file, searchTerm, analysis }) {
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm);
@@ -109,8 +114,8 @@ function FileContent({ file, searchTerm, analysis }) {
     return colors[severity] || '';
   };
 
-  // Virtual list row renderer - wrapped in useCallback for performance
-  const Row = useCallback(({ index, style }) => {
+  // Virtual list row renderer
+  const Row = ({ index, style }) => {
     const lineData = highlightedLines[index];
     const hasPatternMatch = lineData.matchedPatterns !== null;
     const highestSeverity = hasPatternMatch 
@@ -144,7 +149,7 @@ function FileContent({ file, searchTerm, analysis }) {
         </div>
       </div>
     );
-  }, [highlightedLines]);
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -191,7 +196,7 @@ function FileContent({ file, searchTerm, analysis }) {
           itemCount={highlightedLines.length}
           itemSize={24}
           width="100%"
-          className="scrollbar-thin"
+          outerElementType={OuterElementWithScrollbar}
         >
           {Row}
         </List>
