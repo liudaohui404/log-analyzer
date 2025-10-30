@@ -30,6 +30,7 @@ function FileViewer({ data }) {
   };
 
   const filteredFiles = useMemo(() => {
+    if (!data || !data.files) return {};
     if (!searchTerm) return data.files;
     
     const filtered = {};
@@ -40,7 +41,7 @@ function FileViewer({ data }) {
       }
     });
     return filtered;
-  }, [data.files, searchTerm]);
+  }, [data, searchTerm]);
 
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes';

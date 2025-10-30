@@ -61,7 +61,10 @@ function FileContent({ file, searchTerm, analysis }) {
     return map;
   }, [patternMatches]);
 
-  const lines = useMemo(() => file.content.split('\n'), [file.content]);
+  const lines = useMemo(() => {
+    if (!file || !file.content) return [];
+    return file.content.split('\n');
+  }, [file]);
 
   const highlightedLines = useMemo(() => {
     return lines.map((line, index) => {
@@ -86,10 +89,10 @@ function FileContent({ file, searchTerm, analysis }) {
   }, [lines, searchTerm, lineToPatternMap]);
 
   const searchMatches = useMemo(() => {
-    if (!searchTerm) return 0;
+    if (!searchTerm || !file || !file.content) return 0;
     const regex = new RegExp(searchTerm, 'gi');
     return (file.content.match(regex) || []).length;
-  }, [file.content, searchTerm]);
+  }, [file, searchTerm]);
 
   const getSeverityColor = (severity) => {
     const colors = {
