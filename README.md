@@ -186,6 +186,8 @@ log-analyzer/
 ├── server.js                    # Express backend server with API endpoints
 ├── database.js                  # SQLite knowledge base with schema and methods
 ├── logAnalyzer.js              # Pattern detection and log analysis engine
+├── log-store.js                # Normalized log storage module
+├── log_normalizer.js           # Log normalization and formatting
 ├── package.json                # Backend dependencies
 ├── client/                     # React frontend
 │   ├── src/
@@ -199,8 +201,9 @@ log-analyzer/
 │   │   │   └── KnowledgeBase.js    # Pattern & solution management
 │   │   └── index.js            # React entry point
 │   ├── public/                 # Static assets
+│   ├── craco.config.js         # Webpack optimization configuration
+│   ├── tailwind.config.js      # Tailwind CSS configuration
 │   └── package.json            # Frontend dependencies
-├── assets/                     # Sample data
 └── knowledge-base.db           # SQLite database (auto-created)
 ```
 
