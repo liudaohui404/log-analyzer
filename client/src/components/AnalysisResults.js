@@ -407,29 +407,106 @@ function AnalysisResults({ analysis, analysisId }) {
         </div>
       </div>
 
-      {/* Frequent Patterns/Clusters */}
-      {analysis.clusters && analysis.clusters.length > 0 && (
+      {/* Top Error Messages */}
+      {analysis.topErrors && analysis.topErrors.length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-4 flex items-center">
+            <span className="mr-2">�</span>
+            Top Error Messages
+          </h3>
+          <div className="space-y-3">
+            {analysis.topErrors.slice(0, 10).map((error, idx) => (
+              <div
+                key={idx}
+                className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4 border-l-4 border-red-400"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 overflow-hidden">
+                    <div className="text-sm font-medium text-red-800 dark:text-red-200 mb-1">
+                      Error Pattern
+                    </div>
+                    <code className="text-sm text-red-700 dark:text-red-300 block break-words">
+                      {error.pattern}
+                    </code>
+                    {error.sample && (
+                      <div className="mt-2">
+                        <div className="text-xs text-red-600 dark:text-red-400 mb-1">Sample:</div>
+                        <code className="text-xs text-red-600 dark:text-red-400 block break-words bg-red-100 dark:bg-red-900/30 p-2 rounded">
+                          {error.sample}
+                        </code>
+                      </div>
+                    )}
+                  </div>
+                  <div className="ml-4 flex flex-col items-end">
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 mb-2">
+                      {error.count}x
+                    </span>
+                    <span className="text-xs text-red-600 dark:text-red-400">
+                      {error.severity || 'ERROR'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Service Health Summary */}
+      {analysis.serviceHealth && Object.keys(analysis.serviceHealth).length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
           <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-4 flex items-center">
             <span className="mr-2">📈</span>
-            High-Frequency Patterns
+            Service Health Summary
           </h3>
-          <div className="space-y-2">
-            {analysis.clusters.slice(0, 10).map((cluster, idx) => (
-              <div
-                key={idx}
-                className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 flex items-center justify-between"
-              >
-                <div className="flex-1 overflow-hidden">
-                  <code className="text-sm text-gray-800 dark:text-gray-200 block truncate">
-                    {cluster.sample}
-                  </code>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Object.entries(analysis.serviceHealth).map(([service, health]) => {
+              const getHealthColor = (errorRate) => {
+                if (errorRate === 0) return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
+                if (errorRate < 0.1) return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
+                return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+              };
+              
+              const getHealthIcon = (errorRate) => {
+                if (errorRate === 0) return '✅';
+                if (errorRate < 0.1) return '⚠️';
+                return '❌';
+              };
+              
+              const errorRate = health.totalLogs > 0 ? health.errorCount / health.totalLogs : 0;
+              
+              return (
+                <div key={service} className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-white truncate" title={service}>
+                      {service.length > 20 ? `${service.substring(0, 20)}...` : service}
+                    </h4>
+                    <span className="text-lg">{getHealthIcon(errorRate)}</span>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-600 dark:text-gray-400">Total Logs:</span>
+                      <span className="text-gray-900 dark:text-white font-medium">{health.totalLogs}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-600 dark:text-gray-400">Errors:</span>
+                      <span className="text-gray-900 dark:text-white font-medium">{health.errorCount}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-600 dark:text-gray-400">Error Rate:</span>
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${getHealthColor(errorRate)}`}>
+                        {(errorRate * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    {health.lastError && (
+                      <div className="text-xs text-gray-600 dark:text-gray-400 truncate" title={health.lastError}>
+                        Last Error: {health.lastError.length > 30 ? `${health.lastError.substring(0, 30)}...` : health.lastError}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <span className="ml-4 px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-                  {cluster.count}x
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

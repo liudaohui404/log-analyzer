@@ -8,6 +8,8 @@ function KnowledgeBase() {
   const [loading, setLoading] = useState(true);
   const [showPatternForm, setShowPatternForm] = useState(false);
   const [showSolutionForm, setShowSolutionForm] = useState(false);
+  const [editingPattern, setEditingPattern] = useState(null);
+  const [editingSolution, setEditingSolution] = useState(null);
   
   // Form states
   const [patternForm, setPatternForm] = useState({
@@ -55,15 +57,29 @@ function KnowledgeBase() {
     setSelectedPattern(pattern);
     loadSolutions(pattern.id);
     setShowSolutionForm(false);
+    setEditingSolution(null);
+    setSolutionForm({
+      title: '',
+      description: '',
+      root_cause: '',
+      solution_steps: ''
+    });
   };
 
   const handleCreatePattern = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('/api/patterns', {
-        ...patternForm,
-        created_by: 'user'
-      });
+      if (editingPattern) {
+        // 更新Pattern
+        await axios.put(`/api/patterns/${editingPattern.id}`, patternForm);
+        setEditingPattern(null);
+      } else {
+        // 创建新Pattern
+        await axios.post('/api/patterns', {
+          ...patternForm,
+          created_by: 'user'
+        });
+      }
       setShowPatternForm(false);
       setPatternForm({
         name: '',
@@ -75,9 +91,35 @@ function KnowledgeBase() {
       });
       loadPatterns();
     } catch (error) {
-      console.error('Error creating pattern:', error);
-      alert('Failed to create pattern');
+      console.error('Error saving pattern:', error);
+      alert('Failed to save pattern');
     }
+  };
+
+  const handleEditPattern = (pattern) => {
+    setEditingPattern(pattern);
+    setPatternForm({
+      name: pattern.name,
+      description: pattern.description || '',
+      pattern_type: pattern.pattern_type,
+      pattern_value: pattern.pattern_value,
+      severity: pattern.severity,
+      category: pattern.category || ''
+    });
+    setShowPatternForm(true);
+  };
+
+  const cancelPatternEdit = () => {
+    setEditingPattern(null);
+    setShowPatternForm(false);
+    setPatternForm({
+      name: '',
+      description: '',
+      pattern_type: 'keyword',
+      pattern_value: '',
+      severity: 'MEDIUM',
+      category: ''
+    });
   };
 
   const handleCreateSolution = async (e) => {
@@ -89,14 +131,26 @@ function KnowledgeBase() {
         .filter(step => step.trim())
         .map(step => step.trim());
       
-      await axios.post('/api/solutions', {
-        pattern_id: selectedPattern.id,
-        title: solutionForm.title,
-        description: solutionForm.description,
-        root_cause: solutionForm.root_cause,
-        solution_steps: JSON.stringify(stepsArray),
-        created_by: 'user'
-      });
+      if (editingSolution) {
+        // 更新Solution
+        await axios.put(`/api/solutions/${editingSolution.id}`, {
+          title: solutionForm.title,
+          description: solutionForm.description,
+          root_cause: solutionForm.root_cause,
+          solution_steps: JSON.stringify(stepsArray)
+        });
+        setEditingSolution(null);
+      } else {
+        // 创建新Solution
+        await axios.post('/api/solutions', {
+          pattern_id: selectedPattern.id,
+          title: solutionForm.title,
+          description: solutionForm.description,
+          root_cause: solutionForm.root_cause,
+          solution_steps: JSON.stringify(stepsArray),
+          created_by: 'user'
+        });
+      }
       
       setShowSolutionForm(false);
       setSolutionForm({
@@ -107,9 +161,52 @@ function KnowledgeBase() {
       });
       loadSolutions(selectedPattern.id);
     } catch (error) {
-      console.error('Error creating solution:', error);
-      alert('Failed to create solution');
+      console.error('Error saving solution:', error);
+      alert('Failed to save solution');
     }
+  };
+
+  const handleEditSolution = (solution) => {
+    setEditingSolution(solution);
+    const steps = (() => {
+      try {
+        return JSON.parse(solution.solution_steps).join('\n');
+      } catch (e) {
+        return solution.solution_steps || '';
+      }
+    })();
+    
+    setSolutionForm({
+      title: solution.title,
+      description: solution.description,
+      root_cause: solution.root_cause || '',
+      solution_steps: steps
+    });
+    setShowSolutionForm(true);
+  };
+
+  const handleDeleteSolution = async (solutionId) => {
+    if (!window.confirm('Are you sure you want to delete this solution?')) {
+      return;
+    }
+    try {
+      await axios.delete(`/api/solutions/${solutionId}`);
+      loadSolutions(selectedPattern.id);
+    } catch (error) {
+      console.error('Error deleting solution:', error);
+      alert('Failed to delete solution');
+    }
+  };
+
+  const cancelSolutionEdit = () => {
+    setEditingSolution(null);
+    setShowSolutionForm(false);
+    setSolutionForm({
+      title: '',
+      description: '',
+      root_cause: '',
+      solution_steps: ''
+    });
   };
 
   const handleDeletePattern = async (patternId) => {
@@ -174,7 +271,7 @@ function KnowledgeBase() {
       {showPatternForm && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            Create New Pattern
+            {editingPattern ? 'Edit Pattern' : 'Create New Pattern'}
           </h3>
           <form onSubmit={handleCreatePattern} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -267,11 +364,11 @@ function KnowledgeBase() {
                 type="submit"
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors"
               >
-                Create Pattern
+                {editingPattern ? 'Update Pattern' : 'Create Pattern'}
               </button>
               <button
                 type="button"
-                onClick={() => setShowPatternForm(false)}
+                onClick={cancelPatternEdit}
                 className="px-4 py-2 bg-gray-400 hover:bg-gray-500 text-white rounded-md transition-colors"
               >
                 Cancel
@@ -322,15 +419,28 @@ function KnowledgeBase() {
                     </div>
                   </div>
                   {pattern.created_by !== 'system' && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeletePattern(pattern.id);
-                      }}
-                      className="ml-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-                    >
-                      🗑️
-                    </button>
+                    <div className="flex space-x-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditPattern(pattern);
+                        }}
+                        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                        title="Edit pattern"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeletePattern(pattern.id);
+                        }}
+                        className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                        title="Delete pattern"
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -356,6 +466,9 @@ function KnowledgeBase() {
 
               {showSolutionForm && (
                 <form onSubmit={handleCreateSolution} className="mb-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg space-y-3">
+                  <h4 className="text-md font-semibold text-gray-900 dark:text-white mb-2">
+                    {editingSolution ? 'Edit Solution' : 'Add New Solution'}
+                  </h4>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                       Solution Title *
@@ -408,11 +521,11 @@ function KnowledgeBase() {
                       type="submit"
                       className="px-3 py-1 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md"
                     >
-                      Add Solution
+                      {editingSolution ? 'Update Solution' : 'Add Solution'}
                     </button>
                     <button
                       type="button"
-                      onClick={() => setShowSolutionForm(false)}
+                      onClick={cancelSolutionEdit}
                       className="px-3 py-1 text-sm bg-gray-400 hover:bg-gray-500 text-white rounded-md"
                     >
                       Cancel
@@ -426,8 +539,24 @@ function KnowledgeBase() {
                   solutions.map((solution) => (
                     <div
                       key={solution.id}
-                      className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg"
+                      className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg relative"
                     >
+                      <div className="absolute top-2 right-2 flex space-x-1">
+                        <button
+                          onClick={() => handleEditSolution(solution)}
+                          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm"
+                          title="Edit solution"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSolution(solution.id)}
+                          className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-sm"
+                          title="Delete solution"
+                        >
+                          🗑️
+                        </button>
+                      </div>
                       <h4 className="font-semibold text-blue-900 dark:text-blue-200 mb-2">
                         {solution.title}
                       </h4>

@@ -6,6 +6,8 @@ const path = require('path');
 const fs = require('fs');
 const KnowledgeBaseDB = require('./database');
 const LogAnalyzer = require('./logAnalyzer');
+const NormalizedLogStore = require('./log-store');
+const { LogNormalizer } = require('./log_normalizer');
 
 const app = express();
 const PORT = process.env.PORT || 9000;
@@ -13,6 +15,8 @@ const PORT = process.env.PORT || 9000;
 // Initialize database and analyzer
 const db = new KnowledgeBaseDB();
 const analyzer = new LogAnalyzer(db);
+const logStore = new NormalizedLogStore('normalized_logs');
+const logNormalizer = new LogNormalizer('default');
 
 // Middleware
 app.use(cors());
@@ -42,7 +46,7 @@ app.use(express.static(path.join(__dirname, 'client/build')));
 
 // API Routes
 app.post('/api/upload', (req, res) => {
-  upload.single('file')(req, res, (err) => {
+  upload.single('file')(req, res, async (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({ error: 'File too large. Maximum size is 100MB.' });
@@ -186,8 +190,64 @@ app.post('/api/upload', (req, res) => {
         let combinedLevelCounts = {};
         let combinedClusters = [];
         
+        // Normalize and save logs
+        const normalizedLogsPath = path.join('temp_normalized', `${analysisId}.jsonl`);
+        if (!fs.existsSync('temp_normalized')) {
+          fs.mkdirSync('temp_normalized', { recursive: true });
+        }
+        const normalizedOutput = fs.createWriteStream(normalizedLogsPath, { encoding: 'utf8' });
+        
         Object.entries(result.extractedFiles).forEach(([filePath, fileData]) => {
           try {
+            // Normalize the logs
+            const lines = fileData.content.split('\n');
+            let currentLog = '';
+            let stackLines = [];
+            
+            lines.forEach((line) => {
+              // Check for stack trace lines
+              if (line.startsWith('    at ')) {
+                stackLines.push(line.trim());
+                return;
+              }
+              
+              // Process previous log if current line is a new log
+              if (currentLog && line.trim()) {
+                const serviceName = path.basename(filePath, '.log');
+                const normalizer = new LogNormalizer(serviceName);
+                const normalized = normalizer.normalizeLine(currentLog);
+                
+                if (normalized) {
+                  if (stackLines.length > 0) {
+                    if (!normalized.error) normalized.error = {};
+                    normalized.error.stack = stackLines.join('\n');
+                  }
+                  normalizedOutput.write(JSON.stringify(normalized) + '\n');
+                  stackLines = [];
+                }
+              }
+              
+              if (line.trim()) {
+                currentLog = line;
+              }
+            });
+            
+            // Process final log
+            if (currentLog) {
+              const serviceName = path.basename(filePath, '.log');
+              const normalizer = new LogNormalizer(serviceName);
+              const normalized = normalizer.normalizeLine(currentLog);
+              
+              if (normalized) {
+                if (stackLines.length > 0) {
+                  if (!normalized.error) normalized.error = {};
+                  normalized.error.stack = stackLines.join('\n');
+                }
+                normalizedOutput.write(JSON.stringify(normalized) + '\n');
+              }
+            }
+            
+            // Now analyze the original logs
             const analysis = analyzer.analyzeLog(filePath, fileData.content);
             
             // Merge metadata
@@ -233,6 +293,29 @@ app.post('/api/upload', (req, res) => {
         
         // Update analysis record with results
         db.updateAnalysisResults(analysisId, result.totalLines, result.totalSize, 'completed');
+        
+        // Save normalized logs to store
+        normalizedOutput.end();
+        await new Promise((resolve, reject) => {
+          normalizedOutput.on('finish', () => {
+            console.log(`Normalized logs written to temp file: ${normalizedLogsPath}`);
+            logStore.saveNormalizedLogsFromFile(normalizedLogsPath, analysisId).then((count) => {
+              console.log(`Successfully saved ${count} logs for analysis ${analysisId}`);
+              // Clean up temp file
+              try {
+                fs.unlinkSync(normalizedLogsPath);
+                console.log(`Cleaned up temp file: ${normalizedLogsPath}`);
+              } catch (e) {
+                console.error('Error cleaning up temp file:', e);
+              }
+              resolve();
+            }).catch((err) => {
+              console.error('Error saving normalized logs:', err);
+              reject(err);
+            });
+          });
+          normalizedOutput.on('error', reject);
+        });
         
         // Store detected issues in database
         allDetectedIssues.forEach(issue => {
@@ -532,6 +615,332 @@ app.get('/api/issues/:id/comments', (req, res) => {
   } catch (error) {
     console.error('Error fetching comments:', error);
     res.status(500).json({ error: 'Failed to fetch comments' });
+  }
+});
+
+// ========== KNOWLEDGE BASE APIs ==========
+
+// Search knowledge base (patterns + solutions)
+app.get('/api/kb/search', (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 2) {
+      return res.json({ success: true, results: [] });
+    }
+
+    const patterns = db.getAllPatterns();
+    const searchTerm = q.toLowerCase();
+    
+    const results = patterns
+      .filter(p => 
+        p.name.toLowerCase().includes(searchTerm) ||
+        p.description?.toLowerCase().includes(searchTerm) ||
+        p.category?.toLowerCase().includes(searchTerm)
+      )
+      .map(p => {
+        const solutions = db.getSolutionsByPatternId(p.id);
+        return {
+          type: 'pattern',
+          pattern: p,
+          solutions: solutions.slice(0, 3), // Top 3 solutions
+          solution_count: solutions.length
+        };
+      });
+
+    res.json({ success: true, results });
+  } catch (error) {
+    console.error('Error searching knowledge base:', error);
+    res.status(500).json({ error: 'Failed to search knowledge base' });
+  }
+});
+
+// Get knowledge base statistics
+app.get('/api/kb/stats', (req, res) => {
+  try {
+    const patterns = db.getAllPatterns();
+    const solutions = patterns.reduce((sum, p) => {
+      return sum + db.getSolutionsByPatternId(p.id).length;
+    }, 0);
+
+    const statsByCategory = {};
+    const statsBySeverity = {};
+
+    patterns.forEach(p => {
+      // By category
+      statsByCategory[p.category] = (statsByCategory[p.category] || 0) + 1;
+      // By severity
+      statsBySeverity[p.severity] = (statsBySeverity[p.severity] || 0) + 1;
+    });
+
+    res.json({ 
+      success: true, 
+      stats: {
+        total_patterns: patterns.length,
+        total_solutions: solutions,
+        by_category: statsByCategory,
+        by_severity: statsBySeverity
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching KB stats:', error);
+    res.status(500).json({ error: 'Failed to fetch KB stats' });
+  }
+});
+
+// Get all knowledge articles (patterns with solutions)
+app.get('/api/kb/articles', (req, res) => {
+  try {
+    const { category, severity, page = 1, limit = 20 } = req.query;
+    let patterns = db.getAllPatterns();
+
+    // Filter by category if provided
+    if (category) {
+      patterns = patterns.filter(p => p.category === category);
+    }
+
+    // Filter by severity if provided
+    if (severity) {
+      patterns = patterns.filter(p => p.severity === severity);
+    }
+
+    // Pagination
+    const start = (page - 1) * limit;
+    const end = start + parseInt(limit);
+    const paginatedPatterns = patterns.slice(start, end);
+
+    const articles = paginatedPatterns.map(p => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      category: p.category,
+      severity: p.severity,
+      solutions: db.getSolutionsByPatternId(p.id)
+    }));
+
+    res.json({ 
+      success: true, 
+      articles,
+      total: patterns.length,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total_pages: Math.ceil(patterns.length / parseInt(limit))
+    });
+  } catch (error) {
+    console.error('Error fetching KB articles:', error);
+    res.status(500).json({ error: 'Failed to fetch KB articles' });
+  }
+});
+
+// =======================
+// Normalized Logs API
+// =======================
+
+// Get normalized logs with pagination and filtering
+app.get('/api/logs', (req, res) => {
+  try {
+    const { page = 1, pageSize = 20, level, service, search } = req.query;
+    const pageNum = parseInt(page);
+    const pageSizeNum = parseInt(pageSize);
+    const skip = (pageNum - 1) * pageSizeNum;
+
+    // Get all normalized logs from store
+    const allLogs = logStore.getAllNormalizedLogs();
+    
+    // Apply filters
+    let filteredLogs = allLogs;
+    
+    if (level) {
+      filteredLogs = filteredLogs.filter(log => log.level === level.toUpperCase());
+    }
+    
+    if (service) {
+      filteredLogs = filteredLogs.filter(log => log.service === service);
+    }
+    
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredLogs = filteredLogs.filter(log => 
+        (log.message && log.message.toLowerCase().includes(searchLower)) ||
+        (log.error?.message && log.error.message.toLowerCase().includes(searchLower))
+      );
+    }
+
+    // Paginate
+    const paginatedLogs = filteredLogs.slice(skip, skip + pageSizeNum);
+
+    res.json({
+      logs: paginatedLogs,
+      totalCount: filteredLogs.length,
+      page: pageNum,
+      pageSize: pageSizeNum,
+      totalPages: Math.ceil(filteredLogs.length / pageSizeNum)
+    });
+  } catch (error) {
+    console.error('Error fetching logs:', error);
+    res.status(500).json({ error: 'Failed to fetch logs' });
+  }
+});
+
+// Delete logs for a specific analysis (admin/cleanup endpoint)
+app.delete('/api/analysis/:analysisId/logs', (req, res) => {
+  try {
+    const { analysisId } = req.params;
+    
+    // Clear logs from store
+    logStore.clearAnalysisLogs(analysisId);
+    
+    // Optionally delete from database
+    // db.deleteAnalysis(analysisId);
+    
+    res.json({
+      success: true,
+      message: `Logs for analysis ${analysisId} have been deleted`
+    });
+  } catch (error) {
+    console.error('Error deleting logs:', error);
+    res.status(500).json({ error: 'Failed to delete logs' });
+  }
+});
+
+// Get all unique services from logs
+app.get('/api/logs/services', (req, res) => {
+  try {
+    const allLogs = logStore.getAllNormalizedLogs();
+    
+    // Extract all unique services with minimal filtering
+    const services = [...new Set(allLogs.map(log => log.service).filter(service => {
+      // Only filter out completely invalid service names
+      if (!service || service.trim() === '') return false;
+      // Exclude obvious file extensions at the end
+      if (service.match(/\.(dat|dmp|DS_Store)$/i)) return false;
+      return true;
+    }))].sort();
+    
+    console.log(`Global services: Found ${allLogs.length} logs, ${services.length} unique services`);
+
+    res.json({
+      services,
+      totalLogs: allLogs.length
+    });
+  } catch (error) {
+    console.error('Error fetching services:', error);
+    res.status(500).json({ error: 'Failed to fetch services' });
+  }
+});
+
+// Get logs for a specific analysis
+app.get('/api/analysis/:analysisId/logs', (req, res) => {
+  try {
+    const { page = 1, pageSize = 20, level, service, search } = req.query;
+    const pageNum = parseInt(page);
+    const pageSizeNum = parseInt(pageSize);
+    const skip = (pageNum - 1) * pageSizeNum;
+
+    // Get analysis data
+    const analysis = db.getAnalysisById(req.params.analysisId);
+    if (!analysis) {
+      return res.status(404).json({ error: 'Analysis not found' });
+    }
+
+    // Get logs for this analysis from store
+    const allLogs = logStore.getAnalysisLogs(req.params.analysisId);
+    
+    // Apply filters
+    let filteredLogs = allLogs;
+    
+    if (level) {
+      filteredLogs = filteredLogs.filter(log => log.level === level.toUpperCase());
+    }
+    
+    if (service) {
+      filteredLogs = filteredLogs.filter(log => log.service === service);
+    }
+    
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredLogs = filteredLogs.filter(log => 
+        (log.message && log.message.toLowerCase().includes(searchLower)) ||
+        (log.error?.message && log.error.message.toLowerCase().includes(searchLower))
+      );
+    }
+
+    // Paginate
+    const paginatedLogs = filteredLogs.slice(skip, skip + pageSizeNum);
+
+    res.json({
+      logs: paginatedLogs,
+      totalCount: filteredLogs.length,
+      page: pageNum,
+      pageSize: pageSizeNum,
+      totalPages: Math.ceil(filteredLogs.length / pageSizeNum)
+    });
+  } catch (error) {
+    console.error('Error fetching analysis logs:', error);
+    res.status(500).json({ error: 'Failed to fetch analysis logs' });
+  }
+});
+
+// Get available services for an analysis
+app.get('/api/analysis/:analysisId/services', (req, res) => {
+  try {
+    const logs = logStore.getAnalysisLogs(req.params.analysisId);
+    
+    const serviceSet = new Set();
+    const addService = (candidate) => {
+      if (candidate === undefined || candidate === null) return;
+      const serviceName = String(candidate).trim();
+      if (!serviceName) return;
+      if (serviceName === '.' || serviceName === '..') return;
+      if (serviceName.match(/\.(dat|dmp|DS_Store)$/i)) return;
+      serviceSet.add(serviceName);
+    };
+
+    logs.forEach(log => {
+      // Primary service field
+      addService(log.service);
+
+      // Check metadata for additional service identifiers
+      if (log.metadata) {
+        addService(log.metadata.service);
+        addService(log.metadata.Service);
+        addService(log.metadata.serviceName);
+        addService(log.metadata.service_name);
+        addService(log.metadata.component);
+        addService(log.metadata.module);
+        addService(log.metadata.logger);
+        addService(log.metadata.source);
+        addService(log.metadata.package);
+        addService(log.metadata.app);
+        addService(log.metadata.application);
+        
+        // Extract service from file paths
+        if (log.metadata.file || log.metadata.filepath || log.metadata.filename) {
+          const filePathValue = log.metadata.file || log.metadata.filepath || log.metadata.filename;
+          const fileService = path.basename(String(filePathValue)).replace(/\.[^.]+$/g, '');
+          addService(fileService);
+        }
+      }
+
+      // Check context for service identifiers
+      if (log.context) {
+        addService(log.context.service);
+        addService(log.context.Service);
+        addService(log.context.application);
+      }
+    });
+
+    const allServices = [...serviceSet].sort();
+    
+    console.log(`Analysis ${req.params.analysisId}: Found ${logs.length} logs, ${allServices.length} unique services`);
+    console.log(`Services found: ${allServices.join(', ')}`);
+
+    res.json({
+      services: allServices,
+      totalLogs: logs.length
+    });
+  } catch (error) {
+    console.error('Error fetching services:', error);
+    res.status(500).json({ error: 'Failed to fetch services' });
   }
 });
 

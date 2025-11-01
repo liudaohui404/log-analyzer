@@ -179,6 +179,9 @@ class LogAnalyzer {
       });
       
       if (matches.length > 0) {
+        // Try to find related solutions from knowledge base
+        const solutions = this.kb.getSolutionsByPatternId(pattern.id);
+        
         detectedIssues.push({
           pattern_id: pattern.id,
           pattern_name: pattern.name,
@@ -187,8 +190,16 @@ class LogAnalyzer {
           category: pattern.category,
           occurrence_count: matches.length,
           first_occurrence_line: matches[0].lineNumber,
-          sample_lines: matches.slice(0, 10).map(m => m.lineNumber), // First 10 occurrences
-          matches: matches // Keep all matches for highlighting
+          sample_lines: matches.slice(0, 10).map(m => m.lineNumber),
+          matches: matches,
+          // NEW: Attached solutions from knowledge base
+          related_solutions: solutions.map(s => ({
+            id: s.id,
+            title: s.title,
+            root_cause: s.root_cause,
+            solution_steps: s.solution_steps,
+            reference_links: s.reference_links
+          }))
         });
       }
     });
@@ -229,6 +240,117 @@ class LogAnalyzer {
     });
     
     return counts;
+  }
+
+  /**
+   * Extract top error messages from logs
+   */
+  extractTopErrors(parsedLines, threshold = 2) {
+    const errorLines = parsedLines.filter(line => 
+      line.level && ['ERROR', 'FATAL', 'CRITICAL'].includes(line.level)
+    );
+    
+    const errorPatterns = new Map();
+    
+    errorLines.forEach(line => {
+      // Normalize error messages by removing dynamic content
+      const normalized = line.message
+        .replace(/\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?/g, '<TIMESTAMP>')
+        .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<UUID>')
+        .replace(/\b\d+\b/g, '<NUM>')
+        .replace(/0x[0-9a-f]+/gi, '<HEX>')
+        .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '<EMAIL>')
+        .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<IP>')
+        .replace(/\b[a-zA-Z]:\\[^\s]+/g, '<PATH>')
+        .replace(/\/[^\s]+/g, '<PATH>');
+      
+      if (!errorPatterns.has(normalized)) {
+        errorPatterns.set(normalized, {
+          pattern: normalized,
+          sample: line.message,
+          count: 0,
+          severity: line.level,
+          lineNumbers: []
+        });
+      }
+      
+      const pattern = errorPatterns.get(normalized);
+      pattern.count++;
+      pattern.lineNumbers.push(line.lineNumber);
+      
+      // Keep the most recent sample
+      if (line.lineNumber > pattern.lineNumbers[pattern.lineNumbers.length - 2]) {
+        pattern.sample = line.message;
+      }
+    });
+    
+    return Array.from(errorPatterns.values())
+      .filter(pattern => pattern.count >= threshold)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 15);
+  }
+
+  /**
+   * Generate service health summary
+   */
+  generateServiceHealth(parsedLines) {
+    const serviceStats = new Map();
+    
+    parsedLines.forEach(line => {
+      // Extract service name from various patterns
+      let serviceName = 'unknown';
+      
+      // Try to extract from structured logs
+      const servicePatterns = [
+        /service["']?\s*[:=]\s*["']?([^\s,"'\}]+)/i,
+        /component["']?\s*[:=]\s*["']?([^\s,"'\}]+)/i,
+        /module["']?\s*[:=]\s*["']?([^\s,"'\}]+)/i,
+        /logger["']?\s*[:=]\s*["']?([^\s,"'\}]+)/i,
+        /\[([^\]]+)\]/,  // [ServiceName] pattern
+        /^([A-Za-z][A-Za-z0-9_-]+):/,  // ServiceName: pattern
+      ];
+      
+      for (const pattern of servicePatterns) {
+        const match = line.message.match(pattern);
+        if (match && match[1] && match[1].length > 2) {
+          serviceName = match[1].toLowerCase();
+          break;
+        }
+      }
+      
+      if (!serviceStats.has(serviceName)) {
+        serviceStats.set(serviceName, {
+          totalLogs: 0,
+          errorCount: 0,
+          lastError: null,
+          errorTypes: new Set()
+        });
+      }
+      
+      const stats = serviceStats.get(serviceName);
+      stats.totalLogs++;
+      
+      if (line.level && ['ERROR', 'FATAL', 'CRITICAL'].includes(line.level)) {
+        stats.errorCount++;
+        stats.lastError = line.message.substring(0, 100);
+        stats.errorTypes.add(line.level);
+      }
+    });
+    
+    // Convert to object and filter out services with very few logs
+    const healthSummary = {};
+    serviceStats.forEach((stats, serviceName) => {
+      if (stats.totalLogs >= 5) { // Only include services with meaningful log volume
+        healthSummary[serviceName] = {
+          totalLogs: stats.totalLogs,
+          errorCount: stats.errorCount,
+          lastError: stats.lastError,
+          errorTypes: Array.from(stats.errorTypes)
+        };
+      }
+    });
+    
+    return healthSummary;
   }
 
   /**

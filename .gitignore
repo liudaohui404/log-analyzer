@@ -40,3 +40,4 @@ temp/
 # Logs
 logs/
 *.log
+normalized_logs

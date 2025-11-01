@@ -1,46 +1,46 @@
-import React, { useMemo, useRef, useEffect, useState, forwardRef } from 'react';
-import { List } from 'react-window';
-
-// Custom outer element for List to apply scrollbar styles
-const OuterElementWithScrollbar = forwardRef((props, ref) => (
-  <div ref={ref} {...props} className="scrollbar-thin" />
-));
+import React, { useMemo, useRef, useEffect, useState } from "react";
+import { List } from "react-window";
 
 function FileContent({ file, searchTerm, analysis }) {
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm);
+  const [windowHeight, setWindowHeight] = useState(600);
   const containerRef = useRef(null);
 
-  // Debounce search term to improve performance
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearchTerm(searchTerm);
-    }, 300);
+    const updateHeight = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const availableHeight = window.innerHeight - rect.top - 40;
+        setWindowHeight(Math.max(400, availableHeight));
+      }
+    };
 
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
+    updateHeight();
+    window.addEventListener("resize", updateHeight);
+    return () => window.removeEventListener("resize", updateHeight);
+  }, []);
 
   const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
+    if (bytes === 0) return "0 Bytes";
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
   // Get pattern matches for this specific file
   const patternMatches = useMemo(() => {
     if (!analysis || !analysis.detectedIssues) return [];
-    
+
     const matches = [];
-    analysis.detectedIssues.forEach(issue => {
+    analysis.detectedIssues.forEach((issue) => {
       if (issue.files) {
-        const fileMatch = issue.files.find(f => f.path === file.path);
+        const fileMatch = issue.files.find((f) => f.path === file.path);
         if (fileMatch && fileMatch.matches) {
-          fileMatch.matches.forEach(match => {
+          fileMatch.matches.forEach((match) => {
             matches.push({
               lineNumber: match.lineNumber,
               severity: issue.severity,
-              patternName: issue.pattern_name
+              patternName: issue.pattern_name,
             });
           });
         }
@@ -52,7 +52,7 @@ function FileContent({ file, searchTerm, analysis }) {
   // Create a map of line numbers to pattern matches for quick lookup
   const lineToPatternMap = useMemo(() => {
     const map = new Map();
-    patternMatches.forEach(match => {
+    patternMatches.forEach((match) => {
       if (!map.has(match.lineNumber)) {
         map.set(match.lineNumber, []);
       }
@@ -61,75 +61,74 @@ function FileContent({ file, searchTerm, analysis }) {
     return map;
   }, [patternMatches]);
 
-  // Pre-parse and process log lines once
-  const parsedLines = useMemo(() => {
+  const lines = useMemo(() => {
     if (!file || !file.content) return [];
-    return file.content.split('\n').map((line, index) => ({
-      lineNumber: index + 1,
-      rawContent: line,
-      lowerCaseContent: line.toLowerCase() // Pre-compute for faster search
-    }));
+    return file.content.split("\n");
   }, [file]);
 
-  // Optimize highlighted lines computation with debounced search
   const highlightedLines = useMemo(() => {
-    // Escape special regex characters in search term
-    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    
-    return parsedLines.map((lineData) => {
-      let highlightedLine = lineData.rawContent;
-      
-      // Highlight search term only if debounced search exists
-      if (debouncedSearchTerm && lineData.lowerCaseContent.includes(debouncedSearchTerm.toLowerCase())) {
-        const escapedTerm = escapeRegex(debouncedSearchTerm);
-        const regex = new RegExp(`(${escapedTerm})`, 'gi');
-        highlightedLine = lineData.rawContent.replace(regex, '<mark class="bg-yellow-200 dark:bg-yellow-800 px-1">$1</mark>');
+    return lines.map((line, index) => {
+      const lineNumber = index + 1;
+      let highlightedLine = line;
+
+      // Highlight search term
+      if (searchTerm && line.toLowerCase().includes(searchTerm.toLowerCase())) {
+        const regex = new RegExp(`(${searchTerm})`, "gi");
+        highlightedLine = line.replace(
+          regex,
+          '<mark class="bg-yellow-200 dark:bg-yellow-800 px-1">$1</mark>'
+        );
       }
-      
+
       // Check if this line matches any pattern
-      const matchedPatterns = lineToPatternMap.get(lineData.lineNumber);
-      
+      const matchedPatterns = lineToPatternMap.get(lineNumber);
+
       return {
-        lineNumber: lineData.lineNumber,
+        lineNumber,
         content: highlightedLine,
-        matchedPatterns: matchedPatterns || null
+        matchedPatterns: matchedPatterns || null,
       };
     });
-  }, [parsedLines, debouncedSearchTerm, lineToPatternMap]);
+  }, [lines, searchTerm, lineToPatternMap]);
 
   const searchMatches = useMemo(() => {
-    if (!debouncedSearchTerm || !file || !file.content) return 0;
-    const escapedTerm = debouncedSearchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(escapedTerm, 'gi');
+    if (!searchTerm || !file || !file.content) return 0;
+    const regex = new RegExp(searchTerm, "gi");
     return (file.content.match(regex) || []).length;
-  }, [file, debouncedSearchTerm]);
+  }, [file, searchTerm]);
 
   const getSeverityColor = (severity) => {
     const colors = {
-      CRITICAL: 'bg-red-100 border-red-500 dark:bg-red-900/30 dark:border-red-700',
-      HIGH: 'bg-orange-100 border-orange-500 dark:bg-orange-900/30 dark:border-orange-700',
-      MEDIUM: 'bg-yellow-100 border-yellow-500 dark:bg-yellow-900/30 dark:border-yellow-700',
-      LOW: 'bg-blue-100 border-blue-500 dark:bg-blue-900/30 dark:border-blue-700'
+      CRITICAL:
+        "bg-red-100 border-red-500 dark:bg-red-900/30 dark:border-red-700",
+      HIGH: "bg-orange-100 border-orange-500 dark:bg-orange-900/30 dark:border-orange-700",
+      MEDIUM:
+        "bg-yellow-100 border-yellow-500 dark:bg-yellow-900/30 dark:border-yellow-700",
+      LOW: "bg-blue-100 border-blue-500 dark:bg-blue-900/30 dark:border-blue-700",
     };
-    return colors[severity] || '';
+    return colors[severity] || "";
   };
 
   // Virtual list row renderer
   const Row = ({ index, style }) => {
     const lineData = highlightedLines[index];
     const hasPatternMatch = lineData.matchedPatterns !== null;
-    const highestSeverity = hasPatternMatch 
+    const highestSeverity = hasPatternMatch
       ? lineData.matchedPatterns.reduce((max, match) => {
-          const severityOrder = { 'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3 };
-          return severityOrder[match.severity] < severityOrder[max] ? match.severity : max;
-        }, 'LOW')
+          const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+          return severityOrder[match.severity] < severityOrder[max]
+            ? match.severity
+            : max;
+        }, "LOW")
       : null;
 
     return (
       <div
         style={style}
         className={`flex ${
-          hasPatternMatch ? `border-l-4 ${getSeverityColor(highestSeverity)}` : ''
+          hasPatternMatch
+            ? `border-l-4 ${getSeverityColor(highestSeverity)}`
+            : ""
         }`}
       >
         <div className="flex-shrink-0 w-16 px-2 text-right text-xs text-gray-500 dark:text-gray-500 select-none border-r border-gray-200 dark:border-gray-700">
@@ -158,25 +157,20 @@ function FileContent({ file, searchTerm, analysis }) {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white flex items-center">
             <span className="mr-2">📄</span>
-            {file.path.split('/').pop()}
+            {file.path.split("/").pop()}
           </h2>
           <div className="flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400">
             <span>{file.lines.toLocaleString()} lines</span>
             <span>{formatFileSize(file.size)}</span>
           </div>
         </div>
-        
+
         <div className="text-sm text-gray-600 dark:text-gray-400">
           <span className="font-medium">Path:</span> {file.path}
         </div>
-        
+
         <div className="mt-2 flex items-center space-x-2">
-          {searchTerm && searchTerm !== debouncedSearchTerm && (
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-              Searching...
-            </span>
-          )}
-          {debouncedSearchTerm && searchMatches > 0 && (
+          {searchTerm && searchMatches > 0 && (
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
               {searchMatches} search matches
             </span>
@@ -189,17 +183,17 @@ function FileContent({ file, searchTerm, analysis }) {
         </div>
       </div>
 
-      {/* File Content with Virtual Scrolling - Fixed Height */}
-      <div className="flex-1 overflow-hidden" ref={containerRef} style={{ height: '600px' }}>
+      {/* File Content with Virtual Scrolling */}
+      <div className="flex-1 overflow-hidden" ref={containerRef}>
         <List
-          height={600}
-          itemCount={highlightedLines.length}
+          rowHeight={windowHeight}
+          rowCount={highlightedLines.length}
+          rowProps={{}}
+          rowComponent={Row}
           itemSize={24}
           width="100%"
-          outerElementType={OuterElementWithScrollbar}
-        >
-          {Row}
-        </List>
+          className="scrollbar-thin"
+        ></List>
       </div>
 
       {/* Custom scrollbar styling */}
@@ -208,24 +202,24 @@ function FileContent({ file, searchTerm, analysis }) {
           width: 8px;
           height: 8px;
         }
-        
+
         .scrollbar-thin::-webkit-scrollbar-track {
           background: transparent;
         }
-        
+
         .scrollbar-thin::-webkit-scrollbar-thumb {
           background-color: rgba(156, 163, 175, 0.5);
           border-radius: 4px;
         }
-        
+
         .scrollbar-thin::-webkit-scrollbar-thumb:hover {
           background-color: rgba(156, 163, 175, 0.7);
         }
-        
+
         .dark .scrollbar-thin::-webkit-scrollbar-thumb {
           background-color: rgba(75, 85, 99, 0.5);
         }
-        
+
         .dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
           background-color: rgba(75, 85, 99, 0.7);
         }
